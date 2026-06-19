@@ -1,7 +1,7 @@
 # freeaitokens
 
-`freeaitokens` is a plugin-based library for automating browser chat platforms with Playwright.
-
+`freeaitokens` is a plugin-based library for getting free llm
+ tokens from model providers
 It gives you:
 
 - a `PlaywrightChatClient` for one-off requests
@@ -215,6 +215,20 @@ const session = client.createSession({
 `pageMode: 'new'` opens a fresh tab inside the attached profile. Use
 `'first'` or `'last'` to reuse an existing open tab instead.
 
+Windows users can also launch a dedicated Chrome profile with CDP enabled by running:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\launch-chrome-cdp.ps1
+```
+
+Or from Command Prompt / Explorer with the wrapper:
+
+```bat
+scripts\launch-chrome-cdp.cmd
+```
+
+Use `-DryRun` to print the resolved Chrome path, profile directory, and follow-up attach commands without launching Chrome.
+
 ### Running the example script
 
 Stateless run:
@@ -233,6 +247,14 @@ Attach to an already-open Chrome profile over CDP:
 
 ```bash
 CDP_ENDPOINT_URL=http://127.0.0.1:9222 CDP_TAB_MODE=new node examples/chatgpt-web-session.js "Hello"
+```
+
+From PowerShell, the equivalent is:
+
+```powershell
+$env:CDP_ENDPOINT_URL = "http://127.0.0.1:9222"
+$env:CDP_TAB_MODE = "new"
+node examples/chatgpt-web-session.js "Hello"
 ```
 
 The example keeps a single Playwright session open so each prompt continues the same conversation. By default each invocation launches a fresh stateless Chromium context, setting `USER_DATA_DIR` reuses cookies and login state across runs, and setting `CDP_ENDPOINT_URL` attaches to an already-running Chrome instance instead of launching one.
