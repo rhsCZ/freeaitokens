@@ -1,6 +1,6 @@
-const { PluginValidationError } = require('./errors');
-const { PluginRegistry } = require('./plugin-registry');
-const { ChatSession } = require('./session');
+const { PluginValidationError } = require("./errors");
+const { PluginRegistry } = require("./plugin-registry");
+const { ChatSession } = require("./session");
 
 class PlaywrightChatClient {
   constructor(options = {}) {
@@ -8,13 +8,16 @@ class PlaywrightChatClient {
       plugins = [],
       registry = null,
       playwright = null,
-      browserType = 'chromium',
+      browserType = "chromium",
       launchOptions = {},
       contextOptions = {},
+      userDataDir = null,
+      connectOverCDP = null,
       defaultTimeoutMs = 120000,
     } = options;
 
-    this.registry = registry instanceof PluginRegistry ? registry : new PluginRegistry();
+    this.registry =
+      registry instanceof PluginRegistry ? registry : new PluginRegistry();
 
     for (const plugin of plugins) {
       this.registry.register(plugin);
@@ -29,6 +32,8 @@ class PlaywrightChatClient {
     this.contextOptions = {
       ...(contextOptions || {}),
     };
+    this.userDataDir = userDataDir;
+    this.connectOverCDP = connectOverCDP;
     this.defaultTimeoutMs = defaultTimeoutMs;
   }
 
@@ -48,12 +53,14 @@ class PlaywrightChatClient {
       browserType = this.browserType,
       launchOptions = {},
       contextOptions = {},
+      userDataDir = this.userDataDir,
+      connectOverCDP = this.connectOverCDP,
       defaultTimeoutMs = this.defaultTimeoutMs,
     } = options;
 
     if (!plugin) {
       throw new PluginValidationError(
-        'A plugin object or registered plugin name must be provided.'
+        "A plugin object or registered plugin name must be provided.",
       );
     }
 
@@ -71,6 +78,8 @@ class PlaywrightChatClient {
         ...this.contextOptions,
         ...(contextOptions || {}),
       },
+      userDataDir,
+      connectOverCDP,
       defaultTimeoutMs,
     });
   }

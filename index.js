@@ -11,8 +11,13 @@ const {
   createChatGPTWebPlugin,
 } = require("./src/plugins/chatgpt-web");
 const {
+  DEFAULT_CHROME_CDP_ENDPOINT,
+  attachToChromeProfile,
+} = require("./src/chrome-attach");
+const {
   FreeAITokensError,
   PluginValidationError,
+  ConfigurationError,
   PlaywrightDependencyError,
   SessionStateError,
   ResponseTimeoutError,
@@ -28,8 +33,11 @@ module.exports = {
   createSelectorPlugin,
   CHATGPT_WEB_SELECTORS,
   createChatGPTWebPlugin,
+  DEFAULT_CHROME_CDP_ENDPOINT,
+  attachToChromeProfile,
   FreeAITokensError,
   PluginValidationError,
+  ConfigurationError,
   PlaywrightDependencyError,
   SessionStateError,
   ResponseTimeoutError,

@@ -105,10 +105,12 @@ const client = new PlaywrightChatClient({
   launchOptions: {
     headless: false,
   },
+  userDataDir: '.playwright/chatgpt-profile',
 });
 
 const plugin = createChatGPTWebPlugin({
   url: 'https://chatgpt.com/',
+  manualVerification: true,
 });
 
 const session = client.createSession({ plugin });
@@ -141,13 +143,99 @@ This matters because some turns can render multiple assistant blocks, such as a 
 
 If a monitored backend request returns a blocking response such as an HTML challenge page or `403`, the plugin now throws a `NetworkDiagnosticsError` with `error.diagnostics` so you can inspect the failing URLs, statuses, selected headers, and truncated body snippets.
 
+### Cloudflare and managed-challenge workaround
+
+This library does **not** try to bypass Cloudflare or similar bot checks.
+The supported workaround is to run a visible browser with a persistent
+profile, complete any verification manually, and then reuse that profile
+on later runs.
+
+Three knobs now help with that flow, depending on how you want to manage browser state:
+
+- `userDataDir` on `PlaywrightChatClient` or `createSession()` launches a persistent Playwright profile instead of a fresh stateless context
+- `manualVerification` on `createChatGPTWebPlugin()` keeps waiting for the composer while you complete a challenge in the opened browser window
+- `connectOverCDP` on `PlaywrightChatClient` or `createSession()` attaches to an already-running Chromium profile, and `attachToChromeProfile()` builds that option shape for you
+
+Example:
+
+```js
+const client = new PlaywrightChatClient({
+  launchOptions: { headless: false },
+  userDataDir: '.playwright/chatgpt-profile',
+});
+
+const session = client.createSession({
+  plugin: createChatGPTWebPlugin({
+    url: 'https://chatgpt.com/',
+    manualVerification: {
+      enabled: true,
+      timeoutMs: 300000,
+    },
+  }),
+});
+```
+
+If a Cloudflare interstitial is detected before the composer appears, the
+plugin now throws a `NetworkDiagnosticsError` with a synthetic
+`blockingResponse` that points at the current page URL and includes a
+truncated body snippet from the challenge page.
+
+### Attach to an already-open Chrome profile
+
+If Chrome is already running with an exposed Chrome DevTools Protocol
+endpoint, you can attach to that browser instead of launching a new one.
+This is useful when the profile already contains the login, cookies, and
+challenge state you need.
+
+Important: a normal Chrome window with no CDP endpoint cannot be attached.
+You still need Chrome to expose a debuggable endpoint such as
+`http://127.0.0.1:9222`.
+
+```js
+const {
+  PlaywrightChatClient,
+  createChatGPTWebPlugin,
+  attachToChromeProfile,
+} = require('freeaitokens');
+
+const client = new PlaywrightChatClient({
+  ...attachToChromeProfile({
+    endpointURL: 'http://127.0.0.1:9222',
+    pageMode: 'new',
+  }),
+});
+
+const session = client.createSession({
+  plugin: createChatGPTWebPlugin({
+    url: 'https://chatgpt.com/',
+  }),
+});
+```
+
+`pageMode: 'new'` opens a fresh tab inside the attached profile. Use
+`'first'` or `'last'` to reuse an existing open tab instead.
+
 ### Running the example script
+
+Stateless run:
 
 ```bash
 node examples/chatgpt-web-session.js "Hello" "Continue with more detail"
 ```
 
-The example keeps a single Playwright session open so each prompt continues the same conversation, but every invocation launches a fresh stateless Chromium context. No cookies, local storage, or saved `storageState` are reused between runs.
+Persistent profile with manual verification:
+
+```bash
+USER_DATA_DIR=.playwright/chatgpt-profile MANUAL_VERIFICATION=1 HEADLESS=0 node examples/chatgpt-web-session.js "Hello"
+```
+
+Attach to an already-open Chrome profile over CDP:
+
+```bash
+CDP_ENDPOINT_URL=http://127.0.0.1:9222 CDP_TAB_MODE=new node examples/chatgpt-web-session.js "Hello"
+```
+
+The example keeps a single Playwright session open so each prompt continues the same conversation. By default each invocation launches a fresh stateless Chromium context, setting `USER_DATA_DIR` reuses cookies and login state across runs, and setting `CDP_ENDPOINT_URL` attaches to an already-running Chrome instance instead of launching one.
 
 ## Writing your own plugin
 

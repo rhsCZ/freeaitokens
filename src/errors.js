@@ -10,6 +10,7 @@ class FreeAITokensError extends Error {
 }
 
 class PluginValidationError extends FreeAITokensError {}
+class ConfigurationError extends FreeAITokensError {}
 class PlaywrightDependencyError extends FreeAITokensError {}
 class SessionStateError extends FreeAITokensError {}
 class ResponseTimeoutError extends FreeAITokensError {}
@@ -23,6 +24,7 @@ class NetworkDiagnosticsError extends FreeAITokensError {
 module.exports = {
   FreeAITokensError,
   PluginValidationError,
+  ConfigurationError,
   PlaywrightDependencyError,
   SessionStateError,
   ResponseTimeoutError,

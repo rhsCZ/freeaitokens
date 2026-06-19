@@ -119,6 +119,68 @@ function looksLikeCloudflareChallenge(bodySnippet, headers) {
   );
 }
 
+function looksLikeCloudflareInterstitialText(text) {
+  const normalized = (text || "").toLowerCase();
+
+  return (
+    looksLikeCloudflareChallenge(normalized, {}) ||
+    normalized.includes("verify you are human") ||
+    normalized.includes("checking your browser before accessing") ||
+    normalized.includes("just a moment") ||
+    normalized.includes(
+      "please unblock challenges.cloudflare.com to proceed",
+    ) ||
+    normalized.includes("attention required") ||
+    normalized.includes("sorry, you have been blocked")
+  );
+}
+
+function createManualVerificationConfig(manualVerification = false) {
+  if (typeof manualVerification === "boolean") {
+    return {
+      enabled: manualVerification,
+      timeoutMs: 300000,
+      pollIntervalMs: 500,
+    };
+  }
+
+  if (!isPlainObject(manualVerification)) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `manualVerification` must be a boolean or an object when provided.",
+    );
+  }
+
+  const {
+    enabled = true,
+    timeoutMs = 300000,
+    pollIntervalMs = 500,
+  } = manualVerification;
+
+  if (typeof enabled !== "boolean") {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `manualVerification.enabled` must be a boolean when provided.",
+    );
+  }
+
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `manualVerification.timeoutMs` must be a positive number.",
+    );
+  }
+
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `manualVerification.pollIntervalMs` must be a positive number.",
+    );
+  }
+
+  return {
+    enabled,
+    timeoutMs,
+    pollIntervalMs,
+  };
+}
+
 function createNetworkDiagnosticsConfig(networkDiagnostics = {}) {
   if (!isPlainObject(networkDiagnostics)) {
     throw new PluginValidationError(
@@ -200,16 +262,144 @@ async function readLocatorText(locator) {
   }
 }
 
-async function waitForComposer(page, selectors) {
+async function isComposerReady(page, selectors) {
   const input = page.locator(selectors.promptInput).first();
 
-  await input.waitFor({ state: "visible" });
-  await page.waitForFunction((selector) => {
-    const element = document.querySelector(selector);
-    return Boolean(element) && element.isContentEditable === true;
-  }, selectors.promptInput);
+  try {
+    if (!(await input.isVisible())) {
+      return false;
+    }
+  } catch (error) {
+    return false;
+  }
 
-  return input;
+  try {
+    return await page.evaluate((selector) => {
+      const element = document.querySelector(selector);
+      return Boolean(element) && element.isContentEditable === true;
+    }, selectors.promptInput);
+  } catch (error) {
+    return false;
+  }
+}
+
+async function readPageChallengeSnippet(page, maxLength) {
+  try {
+    const pageText = await page.evaluate(
+      (snippetLimit) => {
+        const title = document.title || "";
+        const bodyText = document.body
+          ? (document.body.innerText || "").slice(0, snippetLimit)
+          : "";
+        const html = document.documentElement
+          ? (document.documentElement.innerHTML || "").slice(0, snippetLimit)
+          : "";
+
+        return [title, bodyText, html].filter(Boolean).join("\n\n");
+      },
+      Math.max(maxLength * 2, 4000),
+    );
+
+    return truncateText(normalizeText(pageText), maxLength);
+  } catch (error) {
+    return `[page content unavailable: ${error.message}]`;
+  }
+}
+
+function buildChallengePageDiagnostics(page, bodySnippet) {
+  const entry = {
+    url: page.url(),
+    method: "GET",
+    resourceType: "document",
+    status: 0,
+    statusText: "Cloudflare challenge page",
+    contentType: "text/html",
+    headers: {},
+    bodySnippet,
+    isCloudflareChallenge: true,
+    timestamp: new Date().toISOString(),
+  };
+
+  return {
+    monitoredResponseCount: 0,
+    suspiciousResponseCount: 1,
+    requestFailureCount: 0,
+    blockingResponse: entry,
+    monitoredResponses: [],
+    suspiciousResponses: [entry],
+    requestFailures: [],
+  };
+}
+
+function buildChallengePageError(
+  pluginName,
+  page,
+  bodySnippet,
+  manualVerificationEnabled,
+) {
+  const message = manualVerificationEnabled
+    ? `Cloudflare or a managed challenge is still blocking ${page.url()} while using plugin "${pluginName}". Complete the verification in the opened browser, then retry the prompt.`
+    : `Detected a Cloudflare or managed challenge page at ${page.url()} while using plugin "${pluginName}". Run headful with a persistent user data directory, complete the verification manually, then reuse that profile.`;
+
+  return new NetworkDiagnosticsError(message, {
+    diagnostics: buildChallengePageDiagnostics(page, bodySnippet),
+  });
+}
+
+async function waitForComposer(page, selectors, options = {}) {
+  const {
+    timeoutMs = 120000,
+    pollIntervalMs = 300,
+    pluginName = "chatgpt-web",
+    manualVerification = {
+      enabled: false,
+      timeoutMs: 300000,
+      pollIntervalMs: 500,
+    },
+    bodySnippetLimit = 2000,
+  } = options;
+  const input = page.locator(selectors.promptInput).first();
+  const effectiveTimeoutMs = manualVerification.enabled
+    ? Math.max(timeoutMs, manualVerification.timeoutMs)
+    : timeoutMs;
+  const deadline = Date.now() + effectiveTimeoutMs;
+  let lastChallengeSnippet = "";
+
+  while (Date.now() < deadline) {
+    if (await isComposerReady(page, selectors)) {
+      return input;
+    }
+
+    const pageSnippet = await readPageChallengeSnippet(page, bodySnippetLimit);
+    const challengeDetected = looksLikeCloudflareInterstitialText(pageSnippet);
+
+    if (challengeDetected) {
+      lastChallengeSnippet = pageSnippet;
+
+      if (!manualVerification.enabled) {
+        throw buildChallengePageError(pluginName, page, pageSnippet, false);
+      }
+    }
+
+    await page.waitForTimeout(
+      challengeDetected && manualVerification.enabled
+        ? manualVerification.pollIntervalMs
+        : pollIntervalMs,
+    );
+  }
+
+  if (lastChallengeSnippet) {
+    throw buildChallengePageError(
+      pluginName,
+      page,
+      lastChallengeSnippet,
+      manualVerification.enabled,
+    );
+  }
+
+  throw new ResponseTimeoutError(
+    `Timed out after ${effectiveTimeoutMs}ms waiting for the chat composer in plugin "${pluginName}".`,
+  );
 }
 
 async function getAssistantSnapshot(page, selector) {
@@ -661,6 +851,7 @@ function createChatGPTWebPlugin(options = {}) {
     responseStabilityMs = 1800,
     pollIntervalMs = 300,
     networkDiagnostics = {},
+    manualVerification = false,
   } = options;
 
   if (waitForReady && typeof waitForReady !== "function") {
@@ -674,6 +865,8 @@ function createChatGPTWebPlugin(options = {}) {
     ...(selectors || {}),
   };
   const diagnosticsConfig = createNetworkDiagnosticsConfig(networkDiagnostics);
+  const manualVerificationConfig =
+    createManualVerificationConfig(manualVerification);
   const collectorsByPage = new WeakMap();
   const turnSnapshotsByPage = new WeakMap();
 
@@ -709,7 +902,15 @@ function createChatGPTWebPlugin(options = {}) {
 
       try {
         await maybeNavigate(context.page, url, gotoOptions, context);
-        await waitForComposer(context.page, mergedSelectors);
+        await waitForComposer(context.page, mergedSelectors, {
+          timeoutMs: context.session
+            ? context.session.defaultTimeoutMs
+            : 120000,
+          pollIntervalMs,
+          pluginName: name,
+          manualVerification: manualVerificationConfig,
+          bodySnippetLimit: diagnosticsConfig.bodySnippetLimit,
+        });
 
         if (typeof waitForReady === "function") {
           await waitForReady({
@@ -750,7 +951,15 @@ function createChatGPTWebPlugin(options = {}) {
           await maybeNavigate(context.page, url, gotoOptions, context);
         }
 
-        await waitForComposer(context.page, mergedSelectors);
+        await waitForComposer(context.page, mergedSelectors, {
+          timeoutMs: context.session
+            ? context.session.defaultTimeoutMs
+            : 120000,
+          pollIntervalMs,
+          pluginName: name,
+          manualVerification: manualVerificationConfig,
+          bodySnippetLimit: diagnosticsConfig.bodySnippetLimit,
+        });
       } catch (error) {
         await collector.flush();
         const diagnostics = collector.summarizeSince(turnSnapshot);

@@ -1,6 +1,6 @@
-const { SessionStateError, PluginValidationError } = require('./errors');
-const { launchBrowser } = require('./playwright');
-const { assertValidPlugin } = require('./plugin-registry');
+const { SessionStateError, PluginValidationError } = require("./errors");
+const { launchSession } = require("./playwright");
+const { assertValidPlugin } = require("./plugin-registry");
 
 function buildSessionContext(session, extra = {}) {
   return {
@@ -18,7 +18,7 @@ function buildSessionContext(session, extra = {}) {
 
 function normalizePluginResponse(result, context) {
   const baseResponse = {
-    text: '',
+    text: "",
     plugin: context.plugin.name,
     prompt: context.prompt,
     turn: context.turn,
@@ -26,14 +26,14 @@ function normalizePluginResponse(result, context) {
     createdAt: new Date().toISOString(),
   };
 
-  if (typeof result === 'string') {
+  if (typeof result === "string") {
     return {
       ...baseResponse,
       text: result,
     };
   }
 
-  if (result && typeof result === 'object' && typeof result.text === 'string') {
+  if (result && typeof result === "object" && typeof result.text === "string") {
     return {
       ...baseResponse,
       ...result,
@@ -41,7 +41,7 @@ function normalizePluginResponse(result, context) {
   }
 
   throw new PluginValidationError(
-    `Plugin "${context.plugin.name}" returned an invalid response. Expected a string or an object with a \`text\` property.`
+    `Plugin "${context.plugin.name}" returned an invalid response. Expected a string or an object with a \`text\` property.`,
   );
 }
 
@@ -64,9 +64,11 @@ class ChatSession {
       plugin,
       pluginOptions = {},
       playwright = null,
-      browserType = 'chromium',
+      browserType = "chromium",
       launchOptions = {},
       contextOptions = {},
+      userDataDir = null,
+      connectOverCDP = null,
       defaultTimeoutMs = 120000,
     } = options;
 
@@ -77,11 +79,16 @@ class ChatSession {
     this.browserType = browserType;
     this.launchOptions = launchOptions;
     this.contextOptions = contextOptions;
+    this.userDataDir = userDataDir;
+    this.connectOverCDP = connectOverCDP;
     this.defaultTimeoutMs = defaultTimeoutMs;
 
     this.browser = null;
     this.context = null;
     this.page = null;
+    this.closePageOnClose = true;
+    this.closeContextOnClose = true;
+    this.closeBrowserOnClose = true;
     this.started = false;
     this.closed = false;
     this.history = [];
@@ -89,7 +96,7 @@ class ChatSession {
 
   async start() {
     if (this.closed) {
-      throw new SessionStateError('Cannot start a closed session.');
+      throw new SessionStateError("Cannot start a closed session.");
     }
 
     if (this.started) {
@@ -97,20 +104,27 @@ class ChatSession {
     }
 
     try {
-      this.browser = await launchBrowser({
+      const launchedSession = await launchSession({
         playwright: this.playwright,
         browserType: this.browserType,
         launchOptions: this.launchOptions,
+        contextOptions: this.contextOptions,
+        userDataDir: this.userDataDir,
+        connectOverCDP: this.connectOverCDP,
       });
 
-      this.context = await this.browser.newContext(this.contextOptions);
-      this.page = await this.context.newPage();
+      this.browser = launchedSession.browser;
+      this.context = launchedSession.context;
+      this.page = launchedSession.page;
+      this.closePageOnClose = launchedSession.closePageOnClose !== false;
+      this.closeContextOnClose = launchedSession.closeContextOnClose !== false;
+      this.closeBrowserOnClose = launchedSession.closeBrowserOnClose !== false;
       this.page.setDefaultTimeout(this.defaultTimeoutMs);
       this.page.setDefaultNavigationTimeout(this.defaultTimeoutMs);
 
       this.started = true;
 
-      if (typeof this.plugin.open === 'function') {
+      if (typeof this.plugin.open === "function") {
         await this.plugin.open(buildSessionContext(this));
       }
 
@@ -128,11 +142,11 @@ class ChatSession {
 
   async send(prompt, sendOptions = {}) {
     if (this.closed) {
-      throw new SessionStateError('Cannot send a prompt on a closed session.');
+      throw new SessionStateError("Cannot send a prompt on a closed session.");
     }
 
-    if (typeof prompt !== 'string' || !prompt.trim()) {
-      throw new SessionStateError('Prompt must be a non-empty string.');
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      throw new SessionStateError("Prompt must be a non-empty string.");
     }
 
     if (!this.started) {
@@ -145,7 +159,7 @@ class ChatSession {
         prompt,
         turn,
         sendOptions,
-      })
+      }),
     );
     const response = normalizePluginResponse(rawResult, {
       plugin: this.plugin,
@@ -174,7 +188,7 @@ class ChatSession {
 
     let closeError = null;
 
-    if (this.started && typeof this.plugin.close === 'function') {
+    if (this.started && typeof this.plugin.close === "function") {
       try {
         await this.plugin.close(buildSessionContext(this));
       } catch (error) {
@@ -182,13 +196,24 @@ class ChatSession {
       }
     }
 
-    await safeClose(this.page);
-    await safeClose(this.context);
-    await safeClose(this.browser);
+    if (this.closePageOnClose) {
+      await safeClose(this.page);
+    }
+
+    if (this.closeContextOnClose) {
+      await safeClose(this.context);
+    }
+
+    if (this.closeBrowserOnClose) {
+      await safeClose(this.browser);
+    }
 
     this.page = null;
     this.context = null;
     this.browser = null;
+    this.closePageOnClose = true;
+    this.closeContextOnClose = true;
+    this.closeBrowserOnClose = true;
     this.started = false;
     this.closed = true;
 
