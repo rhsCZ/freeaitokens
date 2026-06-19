@@ -105,9 +105,6 @@ const client = new PlaywrightChatClient({
   launchOptions: {
     headless: false,
   },
-  contextOptions: {
-    storageState: '.auth/chatgpt.json',
-  },
 });
 
 const plugin = createChatGPTWebPlugin({
@@ -138,8 +135,11 @@ The returned response includes:
 - `text`: the aggregated new assistant content for that turn
 - `segments`: the raw new assistant blocks captured during that turn
 - `lastSegment`: the last captured assistant block
+- `networkDiagnostics`: monitored backend request summaries for that turn
 
 This matters because some turns can render multiple assistant blocks, such as a widget followed by explanatory text.
+
+If a monitored backend request returns a blocking response such as an HTML challenge page or `403`, the plugin now throws a `NetworkDiagnosticsError` with `error.diagnostics` so you can inspect the failing URLs, statuses, selected headers, and truncated body snippets.
 
 ### Running the example script
 
@@ -147,7 +147,7 @@ This matters because some turns can render multiple assistant blocks, such as a 
 node examples/chatgpt-web-session.js "Hello" "Continue with more detail"
 ```
 
-The example keeps a single Playwright session open so each prompt continues the same conversation.
+The example keeps a single Playwright session open so each prompt continues the same conversation, but every invocation launches a fresh stateless Chromium context. No cookies, local storage, or saved `storageState` are reused between runs.
 
 ## Writing your own plugin
 

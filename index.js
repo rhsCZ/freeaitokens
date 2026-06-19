@@ -16,6 +16,7 @@ const {
   PlaywrightDependencyError,
   SessionStateError,
   ResponseTimeoutError,
+  NetworkDiagnosticsError,
 } = require("./src/errors");
 
 module.exports = {
@@ -32,4 +33,5 @@ module.exports = {
   PlaywrightDependencyError,
   SessionStateError,
   ResponseTimeoutError,
+  NetworkDiagnosticsError,
 };

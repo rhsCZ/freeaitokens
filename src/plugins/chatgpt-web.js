@@ -1,44 +1,213 @@
-const { PluginValidationError, ResponseTimeoutError } = require('../errors');
-const { createSelectorPlugin } = require('./generic-chat');
+const {
+  PluginValidationError,
+  ResponseTimeoutError,
+  NetworkDiagnosticsError,
+} = require("../errors");
+const { createSelectorPlugin } = require("./generic-chat");
 
 const CHATGPT_WEB_SELECTORS = Object.freeze({
-  promptInput: 'div#prompt-textarea',
+  promptInput: "div#prompt-textarea",
   submitButton: [
-    'button.composer-submit-btn',
+    "button.composer-submit-btn",
     'button[data-testid="send-button"]',
     'button[aria-label="Send prompt"]',
-  ].join(', '),
+  ].join(", "),
   responseItems: 'div[data-message-author-role="assistant"]',
-  busyIndicator: '.result-streaming',
+  busyIndicator: ".result-streaming",
 });
 
+const DEFAULT_NETWORK_DIAGNOSTIC_PATTERNS = Object.freeze([
+  /\/backend(?:-anon)?\//i,
+  /\/conversation/i,
+  /\/models\b/i,
+]);
+
+const DEFAULT_DIAGNOSTIC_HEADERS = Object.freeze([
+  "content-type",
+  "cf-ray",
+  "cf-mitigated",
+  "server",
+  "x-openai-request-id",
+  "x-request-id",
+]);
+
 function normalizeText(text) {
-  if (typeof text !== 'string') {
-    return '';
+  if (typeof text !== "string") {
+    return "";
   }
 
-  return text.replace(/\r\n/g, '\n').trim();
+  return text.replace(/\r\n/g, "\n").trim();
+}
+
+function truncateText(text, maxLength) {
+  if (typeof text !== "string") {
+    return "";
+  }
+
+  if (
+    !Number.isFinite(maxLength) ||
+    maxLength <= 0 ||
+    text.length <= maxLength
+  ) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}\n...[truncated ${text.length - maxLength} chars]`;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeHeaders(headers) {
+  const normalized = {};
+
+  for (const [name, value] of Object.entries(headers || {})) {
+    normalized[name.toLowerCase()] = value;
+  }
+
+  return normalized;
+}
+
+function pickHeaders(headers, names) {
+  const normalized = normalizeHeaders(headers);
+  const result = {};
+
+  for (const name of names) {
+    if (typeof normalized[name] !== "undefined") {
+      result[name] = normalized[name];
+    }
+  }
+
+  return result;
+}
+
+function matchesUrlPattern(url, pattern) {
+  if (pattern instanceof RegExp) {
+    return pattern.test(url);
+  }
+
+  if (typeof pattern === "string") {
+    return url.includes(pattern);
+  }
+
+  if (typeof pattern === "function") {
+    return Boolean(pattern(url));
+  }
+
+  return false;
+}
+
+async function resolveValue(value, context) {
+  if (typeof value === "function") {
+    return value(context);
+  }
+
+  return value;
+}
+
+function looksLikeCloudflareChallenge(bodySnippet, headers) {
+  const text = (bodySnippet || "").toLowerCase();
+
+  return (
+    text.includes("enable javascript and cookies to continue") ||
+    text.includes("window._cf_chl_opt") ||
+    text.includes("/cdn-cgi/challenge-platform/") ||
+    text.includes("challenge-error-text") ||
+    Boolean(headers["cf-ray"]) ||
+    Boolean(headers["cf-mitigated"])
+  );
+}
+
+function createNetworkDiagnosticsConfig(networkDiagnostics = {}) {
+  if (!isPlainObject(networkDiagnostics)) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `networkDiagnostics` must be an object when provided.",
+    );
+  }
+
+  const {
+    enabled = true,
+    urlPatterns = DEFAULT_NETWORK_DIAGNOSTIC_PATTERNS,
+    includeHeaders = DEFAULT_DIAGNOSTIC_HEADERS,
+    maxEntries = 5,
+    bodySnippetLimit = 2000,
+  } = networkDiagnostics;
+
+  if (!Array.isArray(urlPatterns) || !urlPatterns.length) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `networkDiagnostics.urlPatterns` must be a non-empty array.",
+    );
+  }
+
+  if (
+    !urlPatterns.every(
+      (pattern) =>
+        pattern instanceof RegExp ||
+        typeof pattern === "string" ||
+        typeof pattern === "function",
+    )
+  ) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `networkDiagnostics.urlPatterns` entries must be strings, regular expressions, or functions.",
+    );
+  }
+
+  if (!Array.isArray(includeHeaders)) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `networkDiagnostics.includeHeaders` must be an array when provided.",
+    );
+  }
+
+  if (!Number.isFinite(maxEntries) || maxEntries <= 0) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `networkDiagnostics.maxEntries` must be a positive number.",
+    );
+  }
+
+  if (!Number.isFinite(bodySnippetLimit) || bodySnippetLimit <= 0) {
+    throw new PluginValidationError(
+      "ChatGPT web plugin `networkDiagnostics.bodySnippetLimit` must be a positive number.",
+    );
+  }
+
+  return {
+    enabled,
+    urlPatterns: [...urlPatterns],
+    includeHeaders: includeHeaders.map((header) =>
+      String(header).toLowerCase(),
+    ),
+    maxEntries,
+    bodySnippetLimit,
+  };
+}
+
+function shouldInspectUrl(url, diagnosticsConfig) {
+  if (!diagnosticsConfig.enabled) {
+    return false;
+  }
+
+  return diagnosticsConfig.urlPatterns.some((pattern) =>
+    matchesUrlPattern(url, pattern),
+  );
 }
 
 async function readLocatorText(locator) {
   try {
     return normalizeText(await locator.innerText());
   } catch (error) {
-    return normalizeText((await locator.textContent()) || '');
+    return normalizeText((await locator.textContent()) || "");
   }
 }
 
 async function waitForComposer(page, selectors) {
   const input = page.locator(selectors.promptInput).first();
 
-  await input.waitFor({ state: 'visible' });
-  await page.waitForFunction(
-    (selector) => {
-      const element = document.querySelector(selector);
-      return Boolean(element) && element.isContentEditable === true;
-    },
-    selectors.promptInput
-  );
+  await input.waitFor({ state: "visible" });
+  await page.waitForFunction((selector) => {
+    const element = document.querySelector(selector);
+    return Boolean(element) && element.isContentEditable === true;
+  }, selectors.promptInput);
 
   return input;
 }
@@ -55,7 +224,7 @@ async function getAssistantSnapshot(page, selector) {
   return {
     count,
     texts,
-    lastText: texts.length ? texts[texts.length - 1] : '',
+    lastText: texts.length ? texts[texts.length - 1] : "",
   };
 }
 
@@ -89,7 +258,7 @@ async function waitUntilReadyToSend(page, selectors) {
         return false;
       }
 
-      const text = (input.innerText || input.textContent || '').trim();
+      const text = (input.innerText || input.textContent || "").trim();
 
       if (!text) {
         return false;
@@ -109,15 +278,15 @@ async function waitUntilReadyToSend(page, selectors) {
         const styles = window.getComputedStyle(button);
         return (
           !button.disabled &&
-          styles.display !== 'none' &&
-          styles.visibility !== 'hidden'
+          styles.display !== "none" &&
+          styles.visibility !== "hidden"
         );
       });
     },
     {
       inputSelector: selectors.promptInput,
       buttonSelector: selectors.submitButton,
-    }
+    },
   );
 }
 
@@ -149,7 +318,7 @@ async function submitPrompt({ page, inputLocator, config }) {
 
   const submitButton = await findVisibleEnabledSubmitButton(
     page,
-    config.selectors.submitButton
+    config.selectors.submitButton,
   );
 
   if (submitButton) {
@@ -157,25 +326,253 @@ async function submitPrompt({ page, inputLocator, config }) {
     return;
   }
 
-  await inputLocator.press('Enter');
+  await inputLocator.press("Enter");
 }
 
-async function waitForAssistantResponse({ page, previousResponse, config }) {
+function createCollector(page, diagnosticsConfig) {
+  const state = {
+    monitoredResponses: [],
+    suspiciousResponses: [],
+    requestFailures: [],
+  };
+  const pendingTasks = new Set();
+
+  const onResponse = (response) => {
+    const task = (async () => {
+      const url = response.url();
+
+      if (!shouldInspectUrl(url, diagnosticsConfig)) {
+        return;
+      }
+
+      const request = response.request();
+      const headers = normalizeHeaders(response.headers());
+      const contentType = headers["content-type"] || "";
+      let bodySnippet = "";
+
+      if (
+        response.status() >= 400 ||
+        contentType.toLowerCase().includes("text/html")
+      ) {
+        try {
+          bodySnippet = truncateText(
+            await response.text(),
+            diagnosticsConfig.bodySnippetLimit,
+          );
+        } catch (error) {
+          bodySnippet = `[body unavailable: ${error.message}]`;
+        }
+      }
+
+      const entry = {
+        url,
+        method: request.method(),
+        resourceType: request.resourceType(),
+        status: response.status(),
+        statusText: response.statusText(),
+        contentType,
+        headers: pickHeaders(headers, diagnosticsConfig.includeHeaders),
+        bodySnippet,
+        isCloudflareChallenge: looksLikeCloudflareChallenge(
+          bodySnippet,
+          headers,
+        ),
+        timestamp: new Date().toISOString(),
+      };
+
+      state.monitoredResponses.push({
+        url: entry.url,
+        method: entry.method,
+        resourceType: entry.resourceType,
+        status: entry.status,
+        statusText: entry.statusText,
+        contentType: entry.contentType,
+        timestamp: entry.timestamp,
+      });
+
+      if (entry.status >= 400 || entry.isCloudflareChallenge) {
+        state.suspiciousResponses.push(entry);
+      }
+    })();
+
+    pendingTasks.add(task);
+    task.finally(() => pendingTasks.delete(task));
+  };
+
+  const onRequestFailed = (request) => {
+    const url = request.url();
+
+    if (!shouldInspectUrl(url, diagnosticsConfig)) {
+      return;
+    }
+
+    state.requestFailures.push({
+      url,
+      method: request.method(),
+      resourceType: request.resourceType(),
+      failureText: request.failure() ? request.failure().errorText : "unknown",
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  const dispose = () => {
+    page.off("response", onResponse);
+    page.off("requestfailed", onRequestFailed);
+  };
+
+  page.on("response", onResponse);
+  page.on("requestfailed", onRequestFailed);
+  page.once("close", dispose);
+
+  return {
+    createSnapshot() {
+      return {
+        monitoredResponseIndex: state.monitoredResponses.length,
+        suspiciousResponseIndex: state.suspiciousResponses.length,
+        requestFailureIndex: state.requestFailures.length,
+      };
+    },
+    async flush() {
+      if (!pendingTasks.size) {
+        return;
+      }
+
+      await Promise.allSettled(Array.from(pendingTasks));
+    },
+    summarizeSince(snapshot = null) {
+      const normalizedSnapshot = snapshot || {
+        monitoredResponseIndex: 0,
+        suspiciousResponseIndex: 0,
+        requestFailureIndex: 0,
+      };
+      const monitoredResponses = state.monitoredResponses.slice(
+        normalizedSnapshot.monitoredResponseIndex,
+      );
+      const suspiciousResponses = state.suspiciousResponses.slice(
+        normalizedSnapshot.suspiciousResponseIndex,
+      );
+      const requestFailures = state.requestFailures.slice(
+        normalizedSnapshot.requestFailureIndex,
+      );
+      const blockingResponse =
+        suspiciousResponses.find(
+          (response) =>
+            response.status === 403 || response.isCloudflareChallenge,
+        ) || null;
+
+      return {
+        monitoredResponseCount: monitoredResponses.length,
+        suspiciousResponseCount: suspiciousResponses.length,
+        requestFailureCount: requestFailures.length,
+        blockingResponse,
+        monitoredResponses: monitoredResponses.slice(
+          -diagnosticsConfig.maxEntries,
+        ),
+        suspiciousResponses: suspiciousResponses.slice(
+          -diagnosticsConfig.maxEntries,
+        ),
+        requestFailures: requestFailures.slice(-diagnosticsConfig.maxEntries),
+      };
+    },
+    dispose,
+  };
+}
+
+function buildNetworkDiagnosticsError(
+  pluginName,
+  diagnostics,
+  fallbackMessage,
+  cause,
+) {
+  const blocking = diagnostics.blockingResponse;
+  let message =
+    fallbackMessage ||
+    `Monitored network requests failed while using plugin "${pluginName}".`;
+
+  if (blocking) {
+    if (blocking.isCloudflareChallenge) {
+      message =
+        `Received a Cloudflare/managed challenge response from ${blocking.url} ` +
+        `while using plugin "${pluginName}".`;
+    } else {
+      message =
+        `Received HTTP ${blocking.status} from ${blocking.url} while using ` +
+        `plugin "${pluginName}".`;
+    }
+  } else if (diagnostics.requestFailureCount) {
+    const failure =
+      diagnostics.requestFailures[diagnostics.requestFailures.length - 1];
+    message =
+      `A monitored network request failed while using plugin "${pluginName}" ` +
+      `(${failure.method} ${failure.url}).`;
+  } else if (diagnostics.suspiciousResponseCount) {
+    const response =
+      diagnostics.suspiciousResponses[
+        diagnostics.suspiciousResponses.length - 1
+      ];
+    message =
+      `A monitored network response looked suspicious while using plugin ` +
+      `"${pluginName}" (${response.status} ${response.url}).`;
+  }
+
+  return new NetworkDiagnosticsError(message, {
+    cause,
+    diagnostics,
+  });
+}
+
+async function maybeNavigate(page, url, gotoOptions, context) {
+  const resolvedUrl = await resolveValue(url, context);
+
+  if (!resolvedUrl) {
+    return;
+  }
+
+  await page.goto(resolvedUrl, gotoOptions);
+}
+
+async function waitForAssistantResponse({
+  page,
+  previousResponse,
+  config,
+  diagnosticsCollector,
+  diagnosticsSnapshot,
+}) {
   const deadline = Date.now() + config.responseTimeoutMs;
   let sawStreaming = false;
   let sawChange = false;
-  let lastCandidate = '';
+  let lastCandidate = "";
   let stableSince = 0;
 
   while (Date.now() < deadline) {
-    const snapshot = await getAssistantSnapshot(page, config.selectors.responseItems);
+    if (diagnosticsCollector) {
+      const diagnostics =
+        diagnosticsCollector.summarizeSince(diagnosticsSnapshot);
+
+      if (diagnostics.blockingResponse) {
+        await diagnosticsCollector.flush();
+        throw buildNetworkDiagnosticsError(
+          config.name,
+          diagnosticsCollector.summarizeSince(diagnosticsSnapshot),
+          null,
+          null,
+        );
+      }
+    }
+
+    const snapshot = await getAssistantSnapshot(
+      page,
+      config.selectors.responseItems,
+    );
     const busy = await hasVisibleElement(page, config.selectors.busyIndicator);
-    const newTexts = snapshot.texts.slice(previousResponse.count).filter(Boolean);
+    const newTexts = snapshot.texts
+      .slice(previousResponse.count)
+      .filter(Boolean);
     const candidate = newTexts.length
-      ? newTexts.join('\n\n')
+      ? newTexts.join("\n\n")
       : snapshot.lastText && snapshot.lastText !== previousResponse.lastText
         ? snapshot.lastText
-        : '';
+        : "";
 
     if (busy) {
       sawStreaming = true;
@@ -222,34 +619,53 @@ async function waitForAssistantResponse({ page, previousResponse, config }) {
     await page.waitForTimeout(config.pollIntervalMs);
   }
 
+  if (diagnosticsCollector) {
+    await diagnosticsCollector.flush();
+    const diagnostics =
+      diagnosticsCollector.summarizeSince(diagnosticsSnapshot);
+
+    if (
+      diagnostics.blockingResponse ||
+      diagnostics.suspiciousResponseCount ||
+      diagnostics.requestFailureCount
+    ) {
+      throw buildNetworkDiagnosticsError(
+        config.name,
+        diagnostics,
+        `Timed out waiting for an assistant response in plugin "${config.name}" after suspicious network activity.`,
+        null,
+      );
+    }
+  }
+
   throw new ResponseTimeoutError(
-    `Timed out after ${config.responseTimeoutMs}ms waiting for a completed assistant response from plugin "${config.name}".`
+    `Timed out after ${config.responseTimeoutMs}ms waiting for a completed assistant response from plugin "${config.name}".`,
   );
 }
 
 function createChatGPTWebPlugin(options = {}) {
-  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new PluginValidationError(
-      'ChatGPT web plugin options must be an object.'
+      "ChatGPT web plugin options must be an object.",
     );
   }
 
   const {
-    name = 'chatgpt-web',
-    url = 'https://chatgpt.com/',
+    name = "chatgpt-web",
+    url = "https://chatgpt.com/",
     selectors = {},
     waitForReady = null,
-    navigateOnStart = true,
     navigateEveryTurn = false,
     gotoOptions = {},
     responseTimeoutMs = 180000,
     responseStabilityMs = 1800,
     pollIntervalMs = 300,
+    networkDiagnostics = {},
   } = options;
 
-  if (waitForReady && typeof waitForReady !== 'function') {
+  if (waitForReady && typeof waitForReady !== "function") {
     throw new PluginValidationError(
-      'ChatGPT web plugin `waitForReady` must be a function when provided.'
+      "ChatGPT web plugin `waitForReady` must be a function when provided.",
     );
   }
 
@@ -257,52 +673,141 @@ function createChatGPTWebPlugin(options = {}) {
     ...CHATGPT_WEB_SELECTORS,
     ...(selectors || {}),
   };
+  const diagnosticsConfig = createNetworkDiagnosticsConfig(networkDiagnostics);
+  const collectorsByPage = new WeakMap();
+  const turnSnapshotsByPage = new WeakMap();
+
+  function ensureCollector(page) {
+    let collector = collectorsByPage.get(page);
+
+    if (!collector) {
+      collector = createCollector(page, diagnosticsConfig);
+      collectorsByPage.set(page, collector);
+    }
+
+    return collector;
+  }
 
   return createSelectorPlugin({
     name,
     url,
-    navigateOnStart,
-    navigateEveryTurn,
+    navigateOnStart: false,
+    navigateEveryTurn: false,
     gotoOptions: {
-      waitUntil: 'domcontentloaded',
+      waitUntil: "domcontentloaded",
       ...(gotoOptions || {}),
     },
-    inputMode: 'keyboard',
+    inputMode: "keyboard",
     fallbackToKeyboard: true,
     responseTimeoutMs,
     responseStabilityMs,
     pollIntervalMs,
     selectors: mergedSelectors,
     async setup(context) {
-      await waitForComposer(context.page, mergedSelectors);
+      const collector = ensureCollector(context.page);
+      const startupSnapshot = collector.createSnapshot();
 
-      if (typeof waitForReady === 'function') {
-        await waitForReady({
-          ...context,
-          selectors: mergedSelectors,
-        });
+      try {
+        await maybeNavigate(context.page, url, gotoOptions, context);
+        await waitForComposer(context.page, mergedSelectors);
+
+        if (typeof waitForReady === "function") {
+          await waitForReady({
+            ...context,
+            selectors: mergedSelectors,
+          });
+        }
+      } catch (error) {
+        await collector.flush();
+        const diagnostics = collector.summarizeSince(startupSnapshot);
+
+        if (
+          diagnostics.suspiciousResponseCount ||
+          diagnostics.requestFailureCount
+        ) {
+          throw buildNetworkDiagnosticsError(
+            name,
+            diagnostics,
+            `Failed to initialize plugin "${name}".`,
+            error,
+          );
+        }
+
+        throw error;
       }
     },
     async beforeSend(context) {
-      await waitForComposer(context.page, mergedSelectors);
+      const collector = ensureCollector(context.page);
+      const existingDiagnostics = collector.summarizeSince();
+      const turnSnapshot = existingDiagnostics.blockingResponse
+        ? null
+        : collector.createSnapshot();
+
+      turnSnapshotsByPage.set(context.page, turnSnapshot);
+
+      try {
+        if (navigateEveryTurn) {
+          await maybeNavigate(context.page, url, gotoOptions, context);
+        }
+
+        await waitForComposer(context.page, mergedSelectors);
+      } catch (error) {
+        await collector.flush();
+        const diagnostics = collector.summarizeSince(turnSnapshot);
+
+        if (
+          diagnostics.suspiciousResponseCount ||
+          diagnostics.requestFailureCount
+        ) {
+          throw buildNetworkDiagnosticsError(
+            name,
+            diagnostics,
+            `Failed before sending a prompt with plugin "${name}".`,
+            error,
+          );
+        }
+
+        throw error;
+      }
     },
     submit: {
-      strategy: 'custom',
+      strategy: "custom",
       async run(context) {
         await submitPrompt(context);
       },
     },
     async waitForResponse(context) {
-      await waitForAssistantResponse(context);
+      const diagnosticsCollector = collectorsByPage.get(context.page) || null;
+      const diagnosticsSnapshot = turnSnapshotsByPage.get(context.page) || null;
+
+      await waitForAssistantResponse({
+        ...context,
+        diagnosticsCollector,
+        diagnosticsSnapshot,
+      });
     },
-    async extractResponse({ responseDetails, defaultText }) {
-      const segments = responseDetails.newTexts.map(normalizeText).filter(Boolean);
-      const text = segments.length ? segments.join('\n\n') : normalizeText(defaultText);
+    async extractResponse({ page, responseDetails, defaultText }) {
+      const segments = responseDetails.newTexts
+        .map(normalizeText)
+        .filter(Boolean);
+      const text = segments.length
+        ? segments.join("\n\n")
+        : normalizeText(defaultText);
+      const diagnosticsCollector = collectorsByPage.get(page) || null;
+      const diagnosticsSnapshot = turnSnapshotsByPage.get(page) || null;
+      let networkDiagnostics = null;
+
+      if (diagnosticsCollector) {
+        await diagnosticsCollector.flush();
+        networkDiagnostics =
+          diagnosticsCollector.summarizeSince(diagnosticsSnapshot);
+      }
 
       return {
         text,
         segments,
         lastSegment: segments.length ? segments[segments.length - 1] : text,
+        networkDiagnostics,
       };
     },
   });

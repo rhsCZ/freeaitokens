@@ -13,6 +13,12 @@ class PluginValidationError extends FreeAITokensError {}
 class PlaywrightDependencyError extends FreeAITokensError {}
 class SessionStateError extends FreeAITokensError {}
 class ResponseTimeoutError extends FreeAITokensError {}
+class NetworkDiagnosticsError extends FreeAITokensError {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.diagnostics = options.diagnostics || null;
+  }
+}
 
 module.exports = {
   FreeAITokensError,
@@ -20,4 +26,5 @@ module.exports = {
   PlaywrightDependencyError,
   SessionStateError,
   ResponseTimeoutError,
+  NetworkDiagnosticsError,
 };

@@ -1,5 +1,3 @@
-const fs = require("fs");
-const path = require("path");
 const { PlaywrightChatClient, createChatGPTWebPlugin } = require("../index.js");
 
 function readBooleanEnv(name, defaultValue) {
@@ -12,14 +10,13 @@ function readBooleanEnv(name, defaultValue) {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
-async function saveStorageState(session, storageStatePath) {
-  if (!storageStatePath || !session.context) {
+function printDiagnostics(error) {
+  if (!error || !error.diagnostics) {
     return;
   }
 
-  await fs.promises.mkdir(path.dirname(storageStatePath), { recursive: true });
-  await session.context.storageState({ path: storageStatePath });
-  console.error(`Saved storage state to ${storageStatePath}`);
+  console.error("Network diagnostics:");
+  console.error(JSON.stringify(error.diagnostics, null, 2));
 }
 
 async function main() {
@@ -33,27 +30,18 @@ async function main() {
   }
 
   const url = process.env.CHAT_URL || "https://chatgpt.com/";
-  const storageStatePath =
-    process.env.STORAGE_STATE_PATH || ".auth/chatgpt.json";
-  const hasSavedAuth = fs.existsSync(storageStatePath);
   const headless = readBooleanEnv("HEADLESS", false);
   const defaultTimeoutMs = Number(process.env.DEFAULT_TIMEOUT_MS || 300000);
 
-  if (!hasSavedAuth) {
-    console.error(
-      `No saved auth found at ${storageStatePath}. The browser will open in headed mode so you can log in manually if needed.`,
-    );
-  }
+  console.error(
+    "Launching a fresh stateless Chromium context for this run. No cookies or storage state will be reused.",
+  );
 
   const client = new PlaywrightChatClient({
     launchOptions: {
       headless,
     },
-    contextOptions: hasSavedAuth
-      ? {
-          storageState: storageStatePath,
-        }
-      : {},
+    contextOptions: {},
     defaultTimeoutMs,
   });
 
@@ -66,12 +54,6 @@ async function main() {
   try {
     await session.start();
 
-    if (!hasSavedAuth) {
-      console.error(
-        "Composer detected. Continuing the test and saving auth state for next time.",
-      );
-    }
-
     for (const prompt of prompts) {
       const response = await session.send(prompt);
       console.log(
@@ -80,14 +62,13 @@ async function main() {
             prompt,
             response: response.text,
             segments: response.segments || [],
+            networkDiagnostics: response.networkDiagnostics || null,
           },
           null,
           2,
         ),
       );
     }
-
-    await saveStorageState(session, storageStatePath);
   } finally {
     await session.close();
   }
@@ -95,5 +76,6 @@ async function main() {
 
 main().catch((error) => {
   console.error(error);
+  printDiagnostics(error);
   process.exit(1);
 });
