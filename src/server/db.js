@@ -68,7 +68,60 @@ function logRequest({ requestId, model, promptTokens, completionTokens, status, 
   }
 }
 
+function getDbStats() {
+  try {
+    if (!db) {
+      initDb();
+    }
+
+    const summary = db.prepare(`
+      SELECT 
+        COUNT(*) as total_requests,
+        COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
+        COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_requests
+      FROM requests
+    `).get();
+
+    const platformBreakdown = db.prepare(`
+      SELECT 
+        model,
+        COUNT(*) as request_count,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(completion_tokens) as completion_tokens,
+        SUM(total_tokens) as total_tokens,
+        AVG(duration_ms) as avg_duration_ms,
+        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+        SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count
+      FROM requests
+      GROUP BY model
+    `).all();
+
+    const recentRequests = db.prepare(`
+      SELECT * FROM requests
+      ORDER BY timestamp DESC
+      LIMIT 20
+    `).all();
+
+    return {
+      summary,
+      platformBreakdown,
+      recentRequests,
+    };
+  } catch (error) {
+    console.error("Failed to query DB stats:", error);
+    return {
+      summary: { total_requests: 0, total_prompt_tokens: 0, total_completion_tokens: 0, total_tokens: 0, avg_duration_ms: 0, success_requests: 0 },
+      platformBreakdown: [],
+      recentRequests: [],
+    };
+  }
+}
+
 module.exports = {
   initDb,
   logRequest,
+  getDbStats,
 };

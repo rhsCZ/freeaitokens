@@ -1,11 +1,15 @@
-"use strict";
+// Initialize and apply configuration overrides first
+require("./src/server/config");
 
 const { createApp } = require("./src/server/app");
+const { createUiApp } = require("./src/server/ui");
 
 const PORT = Number(process.env.PORT) || 5000;
 const HOST = process.env.HOST || "0.0.0.0";
+const UI_PORT = Number(process.env.UI_PORT) || 5500;
 
 const app = createApp();
+const uiApp = createUiApp();
 
 app.listen(PORT, HOST, () => {
   const base = `http://127.0.0.1:${PORT}`;
@@ -23,4 +27,10 @@ app.listen(PORT, HOST, () => {
   console.log(`    });`);
   console.log(``);
   console.log(`  Browser mode: ${process.env.CDP_ENDPOINT_URL ? `CDP attach (${process.env.CDP_ENDPOINT_URL})` : process.env.USER_DATA_DIR ? `persistent profile (${process.env.USER_DATA_DIR})` : "fresh headless Chromium per request"}`);
+});
+
+uiApp.listen(UI_PORT, HOST, () => {
+  const baseUi = `http://127.0.0.1:${UI_PORT}`;
+  console.log(`  FAI Dashboard UI : ${baseUi}`);
+  console.log(``);
 });
