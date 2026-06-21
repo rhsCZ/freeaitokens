@@ -140,7 +140,8 @@ if (Test-CDPReady -Endpoint $cdpEndpoint) {
     "--user-data-dir=`"$ProfileDir`"",
     "--no-first-run",
     "--no-default-browser-check",
-    "https://chatgpt.com/"
+    "https://chatgpt.com/",
+    "https://gemini.google.com/"
   )
 
   Start-Process -FilePath $resolvedChromePath -ArgumentList $chromeArguments | Out-Null
@@ -149,8 +150,8 @@ if (Test-CDPReady -Endpoint $cdpEndpoint) {
   Write-Host "    Profile : $ProfileDir"
   Write-Host "    CDP     : $cdpEndpoint"
   Write-Host ""
-  Write-Warn "If this is your first time, log in to ChatGPT and complete"
-  Write-Warn "any Cloudflare check in the opened Chrome window, then"
+  Write-Warn "If this is your first time, log in to ChatGPT & Gemini and complete"
+  Write-Warn "any Cloudflare/verification check in the opened Chrome window, then"
   Write-Warn "re-run this script (or wait here - the server will start"
   Write-Warn "automatically once the CDP endpoint becomes available)."
   Write-Host ""

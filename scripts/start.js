@@ -111,6 +111,7 @@ function launchChrome(chromePath) {
     "--no-first-run",
     "--no-default-browser-check",
     "https://chatgpt.com/",
+    "https://gemini.google.com/",
   ];
 
   // On Linux, warn if there is no display server available
@@ -180,8 +181,8 @@ function startServer() {
     console.log(`    Profile : ${PROFILE_DIR}`);
     console.log(`    CDP     : ${CDP_ENDPOINT}`);
     console.log();
-    warn("If this is your first run, log in to ChatGPT and complete");
-    warn("any Cloudflare check in the opened Chrome window, then");
+    warn("If this is your first run, log in to ChatGPT & Gemini and complete");
+    warn("any Cloudflare/verification check in the opened Chrome window, then");
     warn("re-run  npm start  (the server will start automatically");
     warn("once the CDP endpoint becomes available).");
     console.log();

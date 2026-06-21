@@ -7,7 +7,7 @@ param(
 
   [string]$ProfileDir = "",
 
-  [string]$StartUrl = "https://chatgpt.com/",
+  [string[]]$StartUrl = @("https://chatgpt.com/", "https://gemini.google.com/"),
 
   [switch]$DryRun
 )
