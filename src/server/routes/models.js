@@ -5,7 +5,10 @@ const { modelObject, buildError } = require("../openai-format");
 
 const router = express.Router();
 
-const SUPPORTED_MODELS = [modelObject("chatgpt-web")];
+const SUPPORTED_MODELS = [
+  modelObject("chatgpt-web"),
+  modelObject("gemini-web"),
+];
 const SUPPORTED_MODEL_IDS = new Set(SUPPORTED_MODELS.map((m) => m.id));
 
 router.get("/models", (req, res) => {

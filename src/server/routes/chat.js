@@ -124,7 +124,7 @@ async function handleCompletion(req, res) {
   }
 
   const client = createClient();
-  const plugin = createPlugin();
+  const plugin = createPlugin(model);
   const session = client.createSession({ plugin });
 
   let response;

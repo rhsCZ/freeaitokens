@@ -3,6 +3,7 @@
 const {
   PlaywrightChatClient,
   createChatGPTWebPlugin,
+  createGeminiWebPlugin,
   attachToChromeProfile,
 } = require("../../index");
 
@@ -39,11 +40,19 @@ function createClient() {
   });
 }
 
-// Build a ChatGPT web plugin from environment variables.
-function createPlugin() {
-  const url = process.env.CHAT_URL || "https://chatgpt.com/";
+// Build a web plugin from environment variables.
+function createPlugin(model = "chatgpt-web") {
   const manualVerification = readBooleanEnv("MANUAL_VERIFICATION", false);
 
+  if (model === "gemini-web") {
+    const url = process.env.CHAT_URL || "https://gemini.google.com/";
+    return createGeminiWebPlugin({
+      url,
+      manualVerification,
+    });
+  }
+
+  const url = process.env.CHAT_URL || "https://chatgpt.com/";
   return createChatGPTWebPlugin({
     url,
     manualVerification,

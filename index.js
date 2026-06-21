@@ -11,6 +11,10 @@ const {
   createChatGPTWebPlugin,
 } = require("./src/plugins/chatgpt-web");
 const {
+  GEMINI_WEB_SELECTORS,
+  createGeminiWebPlugin,
+} = require("./src/plugins/gemini-web");
+const {
   DEFAULT_CHROME_CDP_ENDPOINT,
   attachToChromeProfile,
 } = require("./src/chrome-attach");
@@ -33,6 +37,8 @@ module.exports = {
   createSelectorPlugin,
   CHATGPT_WEB_SELECTORS,
   createChatGPTWebPlugin,
+  GEMINI_WEB_SELECTORS,
+  createGeminiWebPlugin,
   DEFAULT_CHROME_CDP_ENDPOINT,
   attachToChromeProfile,
   FreeAITokensError,
