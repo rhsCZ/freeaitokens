@@ -49,6 +49,7 @@ function createPlugin(model = "chatgpt-web") {
     return createGeminiWebPlugin({
       url,
       manualVerification,
+      modelName: model,
     });
   }
 

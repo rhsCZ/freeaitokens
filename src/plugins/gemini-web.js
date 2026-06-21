@@ -2,6 +2,7 @@ const {
   PluginValidationError,
   ResponseTimeoutError,
   NetworkDiagnosticsError,
+  PlanTierAccessError,
 } = require("../errors");
 const { createSelectorPlugin } = require("./generic-chat");
 
@@ -16,13 +17,18 @@ const GEMINI_WEB_SELECTORS = Object.freeze({
 
 const DEFAULT_NETWORK_DIAGNOSTIC_PATTERNS = Object.freeze([
   /assistant\.lamda\.BardFrontendService/i,
-  /gemini\.google\.com/i,
+  /^https?:\/\/(?:[a-z0-9-]+\.)*gemini\.google\.com/i,
 ]);
 
 const DEFAULT_DIAGNOSTIC_HEADERS = Object.freeze([
   "content-type",
   "server",
 ]);
+
+async function humanDelay(min = 150, max = 350) {
+  const ms = Math.floor(Math.random() * (max - min + 1) + min);
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function normalizeText(text) {
   if (typeof text !== "string") {
@@ -343,7 +349,8 @@ async function handleCookieBanner(page) {
   try {
     const button = page.locator(acceptButtonSelector);
     if (await button.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await button.click();
+      await humanDelay(200, 450); // Mimic human response reading the banner
+      await button.click({ delay: 100 });
       // Wait for it to become detached or hidden
       await page.waitForSelector(acceptButtonSelector, { state: 'detached', timeout: 5000 }).catch(() => {});
     }
@@ -381,7 +388,8 @@ async function enableTemporaryChat(page, selectors) {
       }).catch(() => false);
 
       if (isPressed !== 'true' && isChecked !== 'true' && !hasActiveClass) {
-        await button.click();
+        await humanDelay(200, 400); // Mimic human thinking/selecting delay
+        await button.click({ delay: 120 });
         
         // Wait for the temporary chat card to show up to ensure initialization completes
         const cardSelector = selectors.tempChatCard;
@@ -396,6 +404,7 @@ async function enableTemporaryChat(page, selectors) {
     // Ignore issues checking or clicking the button
   }
 }
+
 
 async function waitForComposer(page, selectors, options = {}) {
   const {
@@ -565,12 +574,14 @@ async function submitPrompt({ page, inputLocator, config }) {
     config.selectors.submitButton,
   );
 
+  await humanDelay(350, 750); // Pause to mimic user moving mouse or verifying text
+
   if (submitButton) {
-    await submitButton.click();
+    await submitButton.click({ delay: 110 });
     return;
   }
 
-  await inputLocator.press("Enter");
+  await inputLocator.press("Enter", { delay: 90 });
 }
 
 function createCollector(page, diagnosticsConfig) {
@@ -903,6 +914,7 @@ function createGeminiWebPlugin(options = {}) {
   const {
     name = "gemini-web",
     url = "https://gemini.google.com/",
+    modelName = "gemini-web",
     selectors = {},
     waitForReady = null,
     navigateEveryTurn = false,

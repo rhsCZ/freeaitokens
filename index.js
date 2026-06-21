@@ -21,6 +21,7 @@ const {
 const {
   FreeAITokensError,
   PluginValidationError,
+  PlanTierAccessError,
   ConfigurationError,
   PlaywrightDependencyError,
   SessionStateError,
@@ -43,6 +44,7 @@ module.exports = {
   attachToChromeProfile,
   FreeAITokensError,
   PluginValidationError,
+  PlanTierAccessError,
   ConfigurationError,
   PlaywrightDependencyError,
   SessionStateError,

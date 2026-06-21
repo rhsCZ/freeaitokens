@@ -7,11 +7,19 @@ const {
   ResponseTimeoutError,
   NetworkDiagnosticsError,
   PluginValidationError,
+  PlanTierAccessError,
 } = require("../../errors");
 const { buildError } = require("../openai-format");
 
 // Map a library error instance to { status, body } for the HTTP response.
 function classifyError(error) {
+  if (error instanceof PlanTierAccessError) {
+    return {
+      status: 403,
+      body: buildError(error.message, "invalid_request_error", null, "plan_tier_not_allowed"),
+    };
+  }
+
   if (error instanceof ConfigurationError || error instanceof PluginValidationError) {
     return {
       status: 400,
