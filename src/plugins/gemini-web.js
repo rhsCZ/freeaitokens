@@ -10,6 +10,8 @@ const GEMINI_WEB_SELECTORS = Object.freeze({
   submitButton: 'button[aria-label="Send message"]',
   responseItems: 'div.markdown-main-panel, div.markdown, div[id^="model-response-message-content"]',
   busyIndicator: 'div.markdown-main-panel[aria-busy="true"], div.markdown[aria-busy="true"], div[id^="model-response-message-content"][aria-busy="true"]',
+  tempChatButton: 'button[aria-label="Temporary chat"], [data-test-id="temp-chat-button"] button',
+  tempChatCard: 'div.temporary-chat-card, .temporary-chat-card',
 });
 
 const DEFAULT_NETWORK_DIAGNOSTIC_PATTERNS = Object.freeze([
@@ -347,6 +349,51 @@ async function handleCookieBanner(page) {
     }
   } catch (error) {
     // Ignore error if not found or if click fails
+  }
+}
+
+const tempChatEnabledByPage = new WeakSet();
+
+async function enableTemporaryChat(page, selectors) {
+  if (tempChatEnabledByPage.has(page)) {
+    return;
+  }
+
+  // If the temporary chat card is already visible, we don't need to do anything
+  if (selectors.tempChatCard && await page.locator(selectors.tempChatCard).first().isVisible().catch(() => false)) {
+    tempChatEnabledByPage.add(page);
+    return;
+  }
+
+  const selector = selectors.tempChatButton;
+  if (!selector) return;
+  try {
+    const button = page.locator(selector).first();
+    if (await button.isVisible({ timeout: 1000 }).catch(() => false)) {
+      const isPressed = await button.getAttribute('aria-pressed');
+      const isChecked = await button.getAttribute('aria-checked');
+      const hasActiveClass = await button.evaluate(btn => {
+        return btn.classList.contains('active') || 
+               btn.classList.contains('selected') || 
+               btn.classList.contains('temp-chat-active') ||
+               btn.getAttribute('aria-pressed') === 'true' ||
+               btn.getAttribute('aria-checked') === 'true';
+      }).catch(() => false);
+
+      if (isPressed !== 'true' && isChecked !== 'true' && !hasActiveClass) {
+        await button.click();
+        
+        // Wait for the temporary chat card to show up to ensure initialization completes
+        const cardSelector = selectors.tempChatCard;
+        if (cardSelector) {
+          await page.waitForSelector(cardSelector, { state: 'visible', timeout: 5000 }).catch(() => {});
+        }
+      }
+      // Record that we have enabled it for this page session
+      tempChatEnabledByPage.add(page);
+    }
+  } catch (error) {
+    // Ignore issues checking or clicking the button
   }
 }
 
@@ -926,6 +973,8 @@ function createGeminiWebPlugin(options = {}) {
           bodySnippetLimit: diagnosticsConfig.bodySnippetLimit,
         });
 
+        await enableTemporaryChat(context.page, mergedSelectors);
+
         if (typeof waitForReady === "function") {
           await waitForReady({
             ...context,
@@ -976,6 +1025,8 @@ function createGeminiWebPlugin(options = {}) {
           manualVerification: manualVerificationConfig,
           bodySnippetLimit: diagnosticsConfig.bodySnippetLimit,
         });
+
+        await enableTemporaryChat(context.page, mergedSelectors);
       } catch (error) {
         await collector.flush();
         const diagnostics = collector.summarizeSince(turnSnapshot);
