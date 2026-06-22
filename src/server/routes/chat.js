@@ -16,11 +16,10 @@ const { ensureChromeRunning } = require("../chrome-manager");
 
 const router = express.Router();
 
-// Calculate token count where 1 token is 3/4 of a word
+// Calculate token count where 1 token is approximately 4 characters of English text
 function countTokens(text) {
   if (!text) return 0;
-  const words = text.match(/\S+/g) || [];
-  return Math.ceil(words.length / 0.75);
+  return Math.ceil(text.length / 4);
 }
 
 // Clean markdown code blocks and leading JSON labels from response content
