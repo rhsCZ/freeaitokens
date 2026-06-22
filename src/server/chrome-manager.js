@@ -1,7 +1,7 @@
 "use strict";
 
 const http = require("http");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -108,7 +108,65 @@ async function ensureChromeRunning() {
   throw new Error(`Chrome launched but CDP port ${cdpPort} did not become active within ${timeoutMs / 1000} seconds.`);
 }
 
+function killProcessOnPort(port) {
+  const platform = os.platform();
+  try {
+    if (platform === "win32") {
+      // Find PID on port
+      const output = execSync("netstat -ano", { encoding: "utf8" });
+      const lines = output.split("\n");
+      const portStr = `:${port}`;
+      for (const line of lines) {
+        if (line.includes(portStr) && line.includes("LISTENING")) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid && !isNaN(pid) && pid !== "0") {
+            console.log(`[FAI] Killing process ${pid} on port ${port}`);
+            try {
+              execSync(`taskkill /F /PID ${pid}`, { stdio: "ignore" });
+              return true;
+            } catch (err) {
+              // Ignore failure if already gone
+            }
+          }
+        }
+      }
+    } else {
+      // Linux/macOS
+      try {
+        const pid = execSync(`lsof -t -i:${port}`, { encoding: "utf8" }).trim();
+        if (pid) {
+          console.log(`[FAI] Killing process ${pid} on port ${port}`);
+          execSync(`kill -9 ${pid}`, { stdio: "ignore" });
+          return true;
+        }
+      } catch (e) {
+        // lsof returns non-zero if no process found
+      }
+    }
+  } catch (err) {
+    console.error(`[FAI] Failed to kill process on port ${port}:`, err);
+  }
+  return false;
+}
+
+async function forceRestartChrome() {
+  const cdpPort = parseInt(process.env.CDP_PORT || "9222", 10);
+  console.log(`[FAI] Force restarting Chrome on port ${cdpPort}...`);
+
+  // Kill the process on the port
+  killProcessOnPort(cdpPort);
+
+  // Wait a moment for OS to free up resources/port
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  // Ensure it runs again
+  await ensureChromeRunning();
+}
+
 module.exports = {
   ensureChromeRunning,
   checkCDPReady,
+  forceRestartChrome,
 };
+

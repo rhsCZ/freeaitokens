@@ -12,7 +12,7 @@ const {
 } = require("../openai-format");
 const { classifyError } = require("../middleware/error-handler");
 const db = require("../db");
-const { ensureChromeRunning } = require("../chrome-manager");
+const { ensureChromeRunning, forceRestartChrome } = require("../chrome-manager");
 
 const router = express.Router();
 
@@ -122,13 +122,32 @@ async function handleCompletion(req, res) {
     }
   }
 
-  const client = createClient();
-  const plugin = createPlugin(model);
-  const session = client.createSession({ plugin });
+  let client = createClient();
+  let plugin = createPlugin(model);
+  let session = client.createSession({ plugin });
 
   let response;
   try {
-    await session.start();
+    try {
+      await session.start();
+    } catch (startError) {
+      if (process.env.CDP_ENDPOINT_URL) {
+        console.warn("[FAI] Initial browser connection / session start failed. Attempting force-restart and retry...", startError);
+        try {
+          await forceRestartChrome();
+          client = createClient();
+          plugin = createPlugin(model);
+          session = client.createSession({ plugin });
+          console.log("[FAI] Chrome restarted. Retrying session start...");
+          await session.start();
+        } catch (retryError) {
+          console.error("[FAI] Retry connection/start failed:", retryError);
+          throw retryError;
+        }
+      } else {
+        throw startError;
+      }
+    }
     response = await session.send(prompt);
   } catch (error) {
     const durationMs = Date.now() - startTime;
