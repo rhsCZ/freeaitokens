@@ -9,7 +9,7 @@ const AISTUDIO_WEB_SELECTORS = Object.freeze({
   promptInput: '.prompt-box-container textarea',
   submitButton: 'button.ctrl-enter-submits.ms-button-primary',
   responseItems: 'ms-cmark-node.cmark-node',
-  busyIndicator: '.generating, .loading, .ms-stop-button',
+  busyIndicator: 'ms-stop-button, .ms-stop-button, .generating, .loading, button[aria-label*="Stop"], button.ms-stop-button',
   modelSelectorTrigger: 'button.model-selector-card',
   modelOptionsPanel: 'ms-sliding-right-panel .model-options-container, .model-options-container',
   modelButton: 'button.content-button',
